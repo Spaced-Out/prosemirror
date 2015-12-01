@@ -120,7 +120,7 @@ var Tooltip = (function () {
     value: function close() {
       if (this.isOpen) {
         this.isOpen = false;
-        this.dom.style.opacity = this.pointer.style.opacity = 0;
+        this.dom.style.display = this.pointer.style.display = 'none';
       }
     }
   }]);
