@@ -1,6 +1,6 @@
 {
   "name": "prosemirror",
-  "version": "0.0.1",
+  "version": "0.1.1",
   "description": "Well-defined WYSIWYG editor",
   "license": "MIT",
   "maintainers": [
@@ -15,14 +15,17 @@
     "url": "git://github.com/prosemirror/prosemirror.git"
   },
   "dependencies": {
-    "markdown-it": "^4.0.0"
+    "browserkeymap": "^0.1.0",
+    "markdown-it": "^4.4.0"
   },
   "devDependencies": {
-    "xmldom": "^0.1.0",
-    "babel": "^5.1.13",
-    "babelify": "^6.0.2",
+    "babel-cli": "^6.4.0",
+    "babel-preset-es2015": "^6.3.13",
+    "babel-register": "^6.3.13",
+    "babelify": "^7.2.0",
+    "blint": "^0.4.0",
     "watchify": "^3.2.0",
-    "blint": "^0.4.0"
+    "xmldom": "^0.1.0"
   },
   "scripts": {
     "test": "node test/start.js",
@@ -30,6 +33,7 @@
     "browsertests": "watchify -d -v --outfile demo/test-built.js -t babelify demo/test.js",
     "dist": "babel -d dist src",
     "dist-watch": "babel -w -d dist src",
-    "lint": "blint --browser --ecmaVersion 6 --forbidSemicolons src"
+    "lint": "blint --browser --ecmaVersion 6 --forbidSemicolons src",
+    "prepublish": "rm -rf dist/* && babel -d dist src"
   }
 }

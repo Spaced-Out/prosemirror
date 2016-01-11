@@ -1,4 +1,4 @@
-import {doc, blockquote, pre, h1, h2, p, li, ol, ul, em, strong, code, a, a2, br, hr} from "./build"
+import {doc, blockquote, pre, h1, h2, p, li, ol, ul, em, strong, code, a, a2, br, img, hr} from "./build"
 import {Failure} from "./failure"
 import {cmpNode} from "./cmp"
 import {defTest} from "./tests"
@@ -6,8 +6,7 @@ import {defTest} from "./tests"
 import xmlDOM from "xmldom"
 
 import {defaultSchema as schema} from "../src/model"
-import {toDOM} from "../src/serialize/dom"
-import {fromDOM} from "../src/parse/dom"
+import {toDOM, fromDOM} from "../src/format"
 
 function domFor(str) {
   return (new xmlDOM.DOMParser).parseFromString("<!doctype html><html>" + str + "</html>")
@@ -42,6 +41,10 @@ t("simple",
 t("br",
   doc(p("hi", br, "there")),
   "<p>hi<br/>there</p>")
+
+t("img",
+  doc(p("hi", img, "there")),
+  '<p>hi<img src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" alt="x"/>there</p>')
 
 t("join_styles",
   doc(p("one", strong("two", em("three")), em("four"), "five")),
@@ -119,14 +122,18 @@ recover("dont_ignore_whitespace",
         "<p><em>one</em> <strong>two</strong></p>",
         doc(p(em("one"), " ", strong("two"))))
 
-recover("stray tab",
+recover("stray_tab",
         "<p> <b>&#09;</b></p>",
-        doc(p(" ")))
+        doc(p()))
 
-recover("random spaces",
-        "<p><b>1 </b> </p>",
-        doc(p(strong("1 "))))
+recover("random_spaces",
+        "<p><b>1 </b>  </p>",
+        doc(p(strong("1"))))
 
-recover("empty code block",
+recover("empty_code_block",
         "<pre></pre>",
         doc(pre()))
+
+recover("trailing_code",
+        "<pre>foo\n</pre>",
+        doc(pre("foo\n")))

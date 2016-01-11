@@ -1,73 +1,74 @@
 import {Pos} from "./pos"
-import {sameStyles} from "./style"
 
-export function findDiffStart(a, b, pathA = [], pathB = []) {
-  let offset = 0
-  for (let i = 0;; i++) {
-    if (i == a.length || i == b.length) {
-      if (a.length == b.length) return null
+// :: (Node, Node) → ?Pos
+// Find the first position at which nodes `a` and `b` differ, or
+// `null` if they are the same.
+export function findDiffStart(a, b, path = []) {
+  let iA = a.iter(), iB = b.iter(), offset = 0
+  for (;;) {
+    if (iA.atEnd() || iB.atEnd()) {
+      if (a.size == b.size) return null
       break
     }
-    let childA = a.child(i), childB = b.child(i)
-    if (childA == childB) {
-      offset += a.isTextblock ? childA.offset : 1
-      continue
-    }
+
+    let childA = iA.next(), childB = iB.next()
+    if (childA == childB) { offset += childA.width; continue }
 
     if (!childA.sameMarkup(childB)) break
 
-    if (a.isTextblock) {
-      if (!sameStyles(childA.styles, childB.styles)) break
-      if (childA.isText && childA.text != childB.text) {
-        for (let j = 0; childA.text[j] == childB.text[j]; j++)
-          offset++
-        break
-      }
-      offset += childA.offset
-    } else {
-      let inner = findDiffStart(childA, childB, pathA.concat(i), pathB.concat(i))
-      if (inner) return inner
-      offset++
+    if (childA.isText && childA.text != childB.text) {
+      for (let j = 0; childA.text[j] == childB.text[j]; j++)
+        offset++
+      break
     }
+
+    if (childA.size || childB.size) {
+      path.push(offset)
+      let inner = findDiffStart(childA.content, childB.content, path)
+      if (inner) return inner
+      path.pop()
+    }
+    offset += childA.width
   }
-  return {a: new Pos(pathA, offset), b: new Pos(pathB, offset)}
+  return new Pos(path, offset)
 }
 
+// :: (Node, Node) → ?{a: Pos, b: Pos}
+// Find the first position, searching from the end, at which nodes `a`
+// and `b` differ, or `null` if they are the same. Since this position
+// will not be the same in both nodes, an object with two separate
+// positions is returned.
 export function findDiffEnd(a, b, pathA = [], pathB = []) {
-  let iA = a.length, iB = b.length
-  let offset = 0
+  let iA = a.reverseIter(), iB = b.reverseIter()
+  let offA = a.size, offB = b.size
 
-  for (;; iA--, iB--) {
-    if (iA == 0 || iB == 0) {
-      if (iA == iB) return null
+  for (;;) {
+    if (iA.atEnd() || iB.atEnd()) {
+      if (a.size == b.size) return null
       break
     }
-    let childA = a.child(iA - 1), childB = b.child(iB - 1)
+    let childA = iA.next(), childB = iB.next()
     if (childA == childB) {
-      offset += a.isTextblock ? childA.offset : 1
+      offA -= childA.width; offB -= childB.width
       continue
     }
 
     if (!childA.sameMarkup(childB)) break
 
-    if (a.isTextblock) {
-      if (!sameStyles(childA.styles, childB.styles)) break
-
-      if (childA.isText && childA.text != childB.text) {
-        let same = 0, minSize = Math.min(childA.text.length, childB.text.length)
-        while (same < minSize && childA.text[childA.text.length - same - 1] == childB.text[childB.text.length - same - 1]) {
-          same++
-          offset++
-        }
-        break
+    if (childA.isText && childA.text != childB.text) {
+      let same = 0, minSize = Math.min(childA.text.length, childB.text.length)
+      while (same < minSize && childA.text[childA.text.length - same - 1] == childB.text[childB.text.length - same - 1]) {
+        same++; offA--; offB--
       }
-      offset += childA.offset
-    } else {
-      let inner = findDiffEnd(childA, childB, pathA.concat(iA - 1), pathB.concat(iB - 1))
+      break
+    }
+    offA -= childA.width; offB -= childB.width
+    if (childA.size || childB.size) {
+      pathA.push(offA); pathB.push(offB)
+      let inner = findDiffEnd(childA.content, childB.content, pathA, pathB)
       if (inner) return inner
-      offset++
+      pathA.pop(); pathB.pop()
     }
   }
-  return {a: new Pos(pathA, a.maxOffset - offset),
-          b: new Pos(pathB, b.maxOffset - offset)}
+  return {a: new Pos(pathA, offA), b: new Pos(pathB, offB)}
 }

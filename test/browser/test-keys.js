@@ -4,19 +4,16 @@ import {cmp, cmpNode, is} from "../cmp"
 import {defTest} from "../tests"
 
 import {dispatchKey} from "../../src/edit/input"
-import {Keymap} from "../../src/edit/keys"
+import {Keymap} from "../../src/edit"
 import {Pos} from "../../src/model"
 
 function trace(prop) { return pm => pm.mod[prop] = (pm.mod[prop] || 0) + 1 }
 
-const fallthrough = new Keymap({
-  "Ctrl-A": trace("a")
-})
-
 const extraMap = new Keymap({
   "'B'": trace("b"),
-  "Ctrl-X C": trace("c")
-}, {fallthrough: fallthrough})
+  "Ctrl-X C": trace("c"),
+  "Ctrl-A": trace("a")
+})
 
 const test = namespace("keys", {
   doc: doc(p("foo"))
@@ -32,13 +29,6 @@ test("basic", pm => {
   cmp(pm.mod.b, 2)
 })
   
-test("fallthrough", pm => {
-  pm.addKeymap(extraMap)
-  dispatch(pm, "Ctrl-A")
-  dispatch(pm, "Ctrl-A")
-  cmp(pm.mod.a, 2)
-})
-
 test("multi", pm => {
   pm.addKeymap(extraMap)
   dispatch(pm, "Ctrl-X")
@@ -80,12 +70,12 @@ test("addKeymap_bottom", pm => {
 test("multiBindings", pm => {
   dispatch(pm, "Enter")
   cmpNode(pm.doc, doc(pre("\nabc"), ul(li(p("def"))), p("foo")))
-  pm.setSelection(new Pos([1, 0, 0], 3))
+  pm.setTextSelection(new Pos([1, 0, 0], 3))
   dispatch(pm, "Enter")
   cmpNode(pm.doc, doc(pre("\nabc"), ul(li(p("def")), li(p())), p("foo")))
   dispatch(pm, "Enter")
   cmpNode(pm.doc, doc(pre("\nabc"), ul(li(p("def"))), p(), p("foo")))
-  pm.setSelection(new Pos([3], 1))
+  pm.setTextSelection(new Pos([3], 1))
   dispatch(pm, "Enter")
   cmpNode(pm.doc, doc(pre("\nabc"), ul(li(p("def"))), p(), p("f"), p("oo")))
 }, {

@@ -1,12 +1,10 @@
 import {Block, Textblock, Inline, HardBreak, Text} from "../model"
-import {defineTarget} from "./index"
+
+import {defineTarget} from "./register"
 
 Block.prototype.serializeText = node => {
   let accum = ""
-  for (let i = 0; i < node.length; i++) {
-    let child = node.child(i)
-    accum += child.type.serializeText(child)
-  }
+  node.forEach(child => accum += child.type.serializeText(child))
   return accum
 }
 
@@ -21,6 +19,8 @@ HardBreak.prototype.serializeText = () => "\n"
 
 Text.prototype.serializeText = node => node.text
 
+// :: (Node) → string
+// Serialize a node as a plain text string.
 export function toText(doc) {
   return doc.type.serializeText(doc).trim()
 }

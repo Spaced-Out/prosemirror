@@ -1,6 +1,7 @@
+import Keymap from "browserkeymap"
+
 import {setDOMSelectionToPos, findSelectionNear} from "./selection"
 import {browser} from "../dom"
-import {Keymap} from "./keys"
 
 function nothing() {}
 
@@ -18,6 +19,7 @@ function ensureSelection(pm) {
 // find a cursor (as opposed to a node selection) when pressed.
 
 let keys = {
+  "Esc": nothing,
   "Enter": nothing,
   "Mod-Enter": nothing,
   "Shift-Enter": nothing,

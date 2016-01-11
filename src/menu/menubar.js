@@ -1,22 +1,48 @@
 import {defineOption} from "../edit"
 import {elt, insertCSS} from "../dom"
-import {Debounced} from "../util/debounce"
+import {UpdateScheduler} from "../ui/update"
 
-import {Menu, commandGroups} from "./menu"
-import "./icons"
+import {Menu, menuGroups} from "./menu"
+
+const prefix = "ProseMirror-menubar"
+
+// :: union<bool, Object> #path=menuBar #kind=option
+//
+// When given a truthy value, enables the menu bar module for this
+// editor. The menu bar takes up space above the editor, showing
+// currently available commands (that have been
+// [added](#CommandSpec.menuGroup) to the menu). To configure the
+// module, you can pass a configuration object, on which the following
+// properties are supported:
+//
+// **`float`**`: bool = false`
+//   : When enabled, causes the menu bar to stay visible when the
+//     editor is partially scrolled out of view, by making it float at
+//     the top of the viewport.
+//
+// **`groups`**`: [string] = ["inline", "insert", "block", "history"]`
+//   : Determines the menu groups that are shown in the menu bar.
+//
+// **`items`**`: [union<string, [string]>]`
+//   : Can be used to, rather than getting the commands to display
+//     from menu groups, explicitly provide the full list of commands.
+//     If nested arrays are used, separators will be shown between
+//     items from different arrays.
 
 defineOption("menuBar", false, function(pm, value) {
   if (pm.mod.menuBar) pm.mod.menuBar.detach()
   pm.mod.menuBar = value ? new MenuBar(pm, value) : null
 })
 
+function getItems(pm, items) {
+  return Array.isArray(items) ? items.map(getItems.bind(null, pm)) : pm.commands[items]
+}
+
 class BarDisplay {
-  constructor(container, resetFunc) {
+  constructor(container) {
     this.container = container
-    this.resetFunc = resetFunc
   }
   clear() { this.container.textContent = "" }
-  reset() { this.resetFunc() }
   show(dom) {
     this.clear()
     this.container.appendChild(dom)
@@ -27,12 +53,12 @@ class BarDisplay {
       current.style.position = "absolute"
       current.style.opacity = "0.5"
     }
-    let backButton = elt("div", {class: "ProseMirror-menubar-back"})
+    let backButton = elt("div", {class: prefix + "-back"})
     backButton.addEventListener("mousedown", e => {
       e.preventDefault(); e.stopPropagation()
       back()
     })
-    let added = elt("div", {class: "ProseMirror-menubar-sliding"}, backButton, dom)
+    let added = elt("div", {class: prefix + "-sliding"}, backButton, dom)
     this.container.appendChild(added)
     added.getBoundingClientRect() // Force layout for transition
     added.style.left = "0"
@@ -45,27 +71,24 @@ class BarDisplay {
 class MenuBar {
   constructor(pm, config) {
     this.pm = pm
+    this.config = config || {}
 
-    this.menuElt = elt("div", {class: "ProseMirror-menubar-inner"})
-    this.wrapper = elt("div", {class: "ProseMirror-menubar"},
-                       // Height-forcing placeholder
+    this.menuElt = elt("div", {class: prefix + "-inner"})
+    this.wrapper = elt("div", {class: prefix},
+                       // Dummy structure to reserve space for the menu
                        elt("div", {class: "ProseMirror-menu", style: "visibility: hidden"},
-                           elt("div", {class: "ProseMirror-menuicon"},
-                               elt("span", {class: "ProseMirror-menuicon ProseMirror-icon-strong"}))),
+                           elt("span", {class: "ProseMirror-menuicon"},
+                               elt("div", {class: "ProseMirror-icon"}, "x"))),
                        this.menuElt)
     pm.wrapper.insertBefore(this.wrapper, pm.wrapper.firstChild)
 
-    this.menu = new Menu(pm, new BarDisplay(this.menuElt, () => this.resetMenu()))
-    this.debounced = new Debounced(pm, 100, () => this.update())
-    pm.on("selectionChange", this.updateFunc = () => this.debounced.trigger())
-    pm.on("change", this.updateFunc)
-    pm.on("activeStyleChange", this.updateFunc)
+    this.update = new UpdateScheduler(pm, "selectionChange change activeMarkChange commandsChanged", () => this.prepareUpdate())
+    this.menu = new Menu(pm, new BarDisplay(this.menuElt), () => this.resetMenu())
 
-    this.menuItems = config && config.items || commandGroups(pm, "inline", "block", "history")
-    this.update()
+    this.update.force()
 
     this.floating = false
-    if (config && config.float) {
+    if (this.config.float) {
       this.updateFloat()
       this.scrollFunc = () => {
         if (!document.body.contains(this.pm.wrapper))
@@ -78,22 +101,25 @@ class MenuBar {
   }
 
   detach() {
-    this.debounced.clear()
+    this.update.detach()
     this.wrapper.parentNode.removeChild(this.wrapper)
 
-    this.pm.off("selectionChange", this.updateFunc)
-    this.pm.off("change", this.updateFunc)
-    this.pm.off("activeStyleChange", this.updateFunc)
     if (this.scrollFunc)
       window.removeEventListener("scroll", this.scrollFunc)
   }
 
-  update() {
-    if (!this.menu.active) this.resetMenu()
-    if (this.floating) this.scrollCursorIfNeeded()
+  prepareUpdate() {
+    let scrollCursor = this.prepareScrollCursor()
+    return () => {
+      if (!this.menu.active) this.resetMenu()
+      if (scrollCursor) scrollCursor()
+    }
   }
+
   resetMenu() {
-    this.menu.show(this.menuItems)
+    this.menu.show(this.config.items
+                   ? getItems(this.pm, this.config.items)
+                   : menuGroups(this.pm, this.config.groups || ["inline", "insert", "block", "history"]))
   }
 
   updateFloat() {
@@ -119,14 +145,16 @@ class MenuBar {
     }
   }
 
-  scrollCursorIfNeeded() {
+  prepareScrollCursor() {
+    if (!this.floating) return null
     let head = this.pm.selection.head
-    if (!head) return
+    if (!head) return null
     let cursorPos = this.pm.coordsAtPos(head)
     let menuRect = this.menuElt.getBoundingClientRect()
     if (cursorPos.top < menuRect.bottom && cursorPos.bottom > menuRect.top) {
       let scrollable = findWrappingScrollable(this.pm.wrapper)
-      if (scrollable) scrollable.scrollTop -= (menuRect.bottom - cursorPos.top)
+      if (scrollable)
+        return () => scrollable.scrollTop -= (menuRect.bottom - cursorPos.top)
     }
   }
 }
@@ -137,17 +165,17 @@ function findWrappingScrollable(node) {
 }
 
 insertCSS(`
-.ProseMirror-menubar {
-  padding: 1px 4px;
+.${prefix} {
   position: relative;
   margin-bottom: 3px;
   border-top-left-radius: inherit;
   border-top-right-radius: inherit;
 }
 
-.ProseMirror-menubar-inner {
+.${prefix}-inner {
+  min-height: 1em;
   color: #666;
-  padding: 1px 4px;
+  padding: 1px 6px;
   top: 0; left: 0; right: 0;
   position: absolute;
   border-bottom: 1px solid silver;
@@ -160,12 +188,12 @@ insertCSS(`
   border-top-right-radius: inherit;
 }
 
-.ProseMirror-menubar .ProseMirror-menuicon-active {
+.${prefix} .ProseMirror-icon-active {
   background: #eee;
 }
 
-.ProseMirror-menubar input[type="text"],
-.ProseMirror-menubar textarea {
+.${prefix} input[type="text"],
+.${prefix} textarea {
   background: #eee;
   color: black;
   border: none;
@@ -175,24 +203,24 @@ insertCSS(`
   box-sizing: border-box;
 }
 
-.ProseMirror-menubar input[type="text"] {
+.${prefix} input[type="text"] {
   padding: 0 4px;
 }
 
-.ProseMirror-menubar form {
+.${prefix} form {
   position: relative;
   padding: 2px 4px;
 }
 
-.ProseMirror-menubar .ProseMirror-blocktype {
+.${prefix} .ProseMirror-blocktype {
   border: 1px solid #ccc;
   min-width: 4em;
 }
-.ProseMirror-menubar .ProseMirror-blocktype:after {
+.${prefix} .ProseMirror-blocktype:after {
   color: #ccc;
 }
 
-.ProseMirror-menubar-sliding {
+.${prefix}-sliding {
   -webkit-transition: left 0.2s ease-out;
   -moz-transition: left 0.2s ease-out;
   transition: left 0.2s ease-out;
@@ -205,7 +233,7 @@ insertCSS(`
   background: white;
 }
 
-.ProseMirror-menubar-back {
+.${prefix}-back {
   position: absolute;
   height: 100%;
   margin-top: -1px;
@@ -215,7 +243,7 @@ insertCSS(`
   border-right: 1px solid silver;
   cursor: pointer;
 }
-.ProseMirror-menubar-back:after {
+.${prefix}-back:after {
   content: "«";
 }
 

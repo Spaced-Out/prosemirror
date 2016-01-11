@@ -1,25 +1,53 @@
-import {Pos, spanStylesAt} from "../model"
+import {Pos} from "../model"
 import {Keymap} from "../edit"
 
-export function addInputRules(pm, rules) {
+// :: (ProseMirror, InputRule)
+// Add the given [input rule](#InputRule) to an editor. From now on,
+// whenever the rule's pattern is typed, its handler is activated.
+//
+// Note that the effect of an input rule can be canceled by pressing
+// Backspace right after it happens.
+export function addInputRule(pm, rule) {
   if (!pm.mod.interpretInput)
     pm.mod.interpretInput = new InputRules(pm)
-  pm.mod.interpretInput.addRules(rules)
+  pm.mod.interpretInput.addRule(rule)
 }
 
-export function removeInputRules(pm, rules) {
+// :: (ProseMirror, string)
+// Remove the input rule with the given name (added earlier with
+// `addInputRule`) from the editor.
+export function removeInputRule(pm, name) {
   let ii = pm.mod.interpretInput
   if (!ii) return
-  ii.removeRules(rules)
+  ii.removeRule(name)
   if (ii.rules.length == 0) {
     ii.unregister()
     pm.mod.interpretInput = null
   }
 }
 
-export class Rule {
-  constructor(lastChar, match, handler) {
-    this.lastChar = lastChar
+// ;; Input rules are regular expressions describing a piece of text
+// that, when typed, causes something to happen. This might be
+// changing two dashes into an emdash, wrapping a paragraph starting
+// with `"> "` into a blockquote, or something entirely different.
+export class InputRule {
+  // :: (string, RegExp, ?string, union<string, (ProseMirror, [string], Pos)>)
+  // Create an input rule. Its name is used to identify it (to disable
+  // it). The rule applies when the user typed something and the text
+  // directly in front of the cursor matches `match`, which should
+  // probably end with `$`. You can optionally provide a filter, which
+  // should be a single character that always appears at the end of
+  // the match, and will be used to only apply the rule when there's
+  // an actual chance of it succeeding.
+  //
+  // The `handler` can be a string, in which case the matched text
+  // will simply be replaced by that string, or a function, which will
+  // be called with the match array produced by
+  // [`RegExp.exec`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/exec),
+  // and should produce the effect of the rule.
+  constructor(name, match, filter, handler) {
+    this.name = name
+    this.filter = filter
     this.match = match
     this.handler = handler
   }
@@ -42,14 +70,16 @@ class InputRules {
     this.pm.removeKeymap("inputRules")
   }
 
-  addRules(rules) {
-    this.rules = this.rules.concat(rules)
+  addRule(rule) {
+    this.rules.push(rule)
   }
 
-  removeRules(rules) {
-    for (let i = 0; i < rules.length; i++) {
-      let found = this.rules.indexOf(rules[i])
-      if (found > -1) this.rules.splice(found, 1)
+  removeRule(name) {
+    for (let i = 0; i < this.rules.length; i++) {
+      if (this.rules[i].name == name) {
+        this.rules.splice(i, 1)
+        return true
+      }
     }
   }
 
@@ -62,7 +92,7 @@ class InputRules {
 
     for (let i = 0; i < this.rules.length; i++) {
       let rule = this.rules[i], match
-      if (rule.lastChar && rule.lastChar != lastCh) continue
+      if (rule.filter && rule.filter != lastCh) continue
       if (textBefore == null) {
         ;({textBefore, isCode} = getContext(this.pm.doc, pos))
         if (isCode) return
@@ -72,9 +102,9 @@ class InputRules {
         if (typeof rule.handler == "string") {
           let offset = pos.offset - (match[1] || match[0]).length
           let start = new Pos(pos.path, offset)
-          let styles = spanStylesAt(this.pm.doc, pos)
+          let marks = this.pm.doc.marksAt(pos)
           this.pm.tr.delete(start, pos)
-                    .insert(start, this.pm.schema.text(rule.handler, styles))
+                    .insert(start, this.pm.schema.text(rule.handler, marks))
                     .apply()
         } else {
           rule.handler(this.pm, match, pos)
@@ -99,15 +129,10 @@ function getContext(doc, pos) {
   let parent = doc.path(pos.path)
   let isCode = parent.type.isCode
   let textBefore = ""
-  for (let offset = 0, i = 0; offset < pos.offset;) {
-    let child = parent.child(i++), size = child.offset
-    textBefore += offset + size > pos.offset ? child.text.slice(0, pos.offset - offset) : child.text
-    if (offset + size >= pos.offset) {
-      if (child.styles.some(st => st.type.isCode))
-        isCode = true
-      break
-    }
-    offset += size
+  for (let i = parent.iter(0, pos.offset), child; child = i.next().value;) {
+    if (child.isText) textBefore += child.text
+    else textBefore = ""
+    if (i.atEnd() && child.marks.some(st => st.type.isCode)) isCode = true
   }
   return {textBefore, isCode}
 }

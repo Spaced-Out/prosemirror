@@ -1,13 +1,50 @@
-import {Tooltip} from "./tooltip"
+import {Tooltip} from "../ui/tooltip"
 import {elt, insertCSS} from "../dom"
-import {defineParamHandler} from "../edit"
+import {defineDefaultParamHandler, Command} from "../edit"
 import sortedInsert from "../util/sortedinsert"
+import {AssertionError} from "../util/error"
+
+import {getIcon} from "./icons"
+
+// ;; #path=CommandSpec #kind=interface #noAnchor
+// The `menu` module gives meaning to two additional properties of
+// [command specs](#CommandSpec).
+
+// :: string #path=CommandSpec.menuGroup
+//
+// Adds the command to the menugroup with the given name. The value
+// may either be just a name (for example `"inline"` or `"block"`), or
+// a name followed by a parenthesized rank (`"inline(40)"`) to control
+// the order in which the commands appear in the group (from low to
+// high, with 50 as default rank).
+
+// :: Object #path=CommandSpec.display
+//
+// Determines how a command is shown in the menu. The object should
+// have a `type` property, which picks a style of display. These types
+// are supported:
+//
+// **`"icon"`**
+//   : Show the command as an icon. The object may have `{path, width,
+//     height}` properties, where `path` is an [SVG path
+//     spec](https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute/d),
+//     and `width` and `height` provide the viewbox in which that path
+//     exists. Alternatively, it may have a `text` property specifying
+//     a string of text that makes up the icon, with an optional
+//     `style` property giving additional CSS styling for the text.
+//
+// **`"param"`**
+//   : Render command based on its first and only
+//     [parameter](#CommandSpec.params), and immediately execute the
+//     command when the parameter is changed. Currently only works for
+//     `"select"` parameters.
 
 export class Menu {
-  constructor(pm, display) {
+  constructor(pm, display, reset) {
     this.display = display
     this.stack = []
     this.pm = pm
+    this.resetHandler = reset
   }
 
   show(content, displayInfo) {
@@ -17,23 +54,26 @@ export class Menu {
 
   reset() {
     this.stack.length = 0
-    this.display.reset()
+    this.resetHandler()
   }
 
   enter(content, displayInfo) {
-    let pieces = [], explore = value => {
+    let pieces = [], close = false, explore = value => {
+      let added = false
       if (Array.isArray(value)) {
-        for (let i = 0; i < value.length; i++) explore(value[i])
-        pieces.push(separator)
+        for (let i = 0; i < value.length; i++) added = explore(value[i]) || added
+        if (added) close = true
       } else if (!value.select || value.select(this.pm)) {
+        if (close) {
+          pieces.push(separator)
+          close = false
+        }
         pieces.push(value)
+        added = true
       }
+      return added
     }
     explore(content)
-    // Remove superfluous separators
-    for (let i = 0; i < pieces.length; i++)
-      if (pieces[i] == separator && (i == 0 || i == pieces.length - 1 || pieces[i + 1] == separator))
-        pieces.splice(i--, 1)
 
     if (!pieces.length) return this.display.clear()
 
@@ -59,23 +99,17 @@ export class Menu {
     if (this.stack.length)
       this.draw()
     else
-      this.display.reset()
+      this.resetHandler()
   }
 }
 
 export class TooltipDisplay {
-  constructor(tooltip, resetFunc) {
+  constructor(tooltip) {
     this.tooltip = tooltip
-    this.resetFunc = resetFunc
   }
 
   clear() {
     this.tooltip.close()
-  }
-
-  reset() {
-    if (this.resetFunc) this.resetFunc()
-    else this.clear()
   }
 
   show(dom, info) {
@@ -98,11 +132,9 @@ function title(pm, command) {
 }
 
 function renderIcon(command, menu) {
-  let iconClass = "ProseMirror-menuicon"
-  if (command.active(menu.pm)) iconClass += " ProseMirror-menuicon-active"
-
-  let dom = elt("div", {class: iconClass, title: title(menu.pm, command)},
-                elt("span", {class: "ProseMirror-menuicon ProseMirror-icon-" + command.name}))
+  let icon = getIcon(command.name, command.spec.display)
+  if (command.active(menu.pm)) icon.className += " ProseMirror-icon-active"
+  let dom = elt("span", {class: "ProseMirror-menuicon", title: title(menu.pm, command)}, icon)
   dom.addEventListener("mousedown", e => {
     e.preventDefault(); e.stopPropagation()
     if (!command.params.length) {
@@ -119,10 +151,17 @@ function renderIcon(command, menu) {
 
 function renderSelect(item, menu) {
   let param = item.params[0]
-  let value = !param.default ? null : param.default.call ? param.default(menu.pm) : param.default
+  let deflt = paramDefault(param, menu.pm, item)
+  if (deflt != null) {
+    let options = param.options.call ? param.options(menu.pm) : param.options
+    for (let i = 0; i < options.length; i++) if (options[i].value === deflt) {
+      deflt = options[i]
+      break
+    }
+  }
 
   let dom = elt("div", {class: "ProseMirror-select ProseMirror-select-command-" + item.name, title: item.label},
-                !value ? (param.defaultLabel || "Select...") : value.display ? value.display(value) : value.label)
+                !deflt ? (param.defaultLabel || "Select...") : deflt.display ? deflt.display(deflt) : deflt.label)
   dom.addEventListener("mousedown", e => {
     e.preventDefault(); e.stopPropagation()
     showSelectMenu(menu.pm, item, dom)
@@ -160,27 +199,38 @@ export function showSelectMenu(pm, item, dom) {
 }
 
 function renderItem(item, menu) {
-  if (item.display == "icon") return renderIcon(item, menu)
-  else if (item.display == "select") return renderSelect(item, menu)
-  else if (!item.display) throw new Error("Command " + item.name + " can not be shown in a menu")
-  else return item.display(menu)
+  if (item instanceof Command) {
+    var display = item.spec.display
+    if (display.type == "icon") return renderIcon(item, menu)
+    else if (display.type == "param") return renderSelect(item, menu)
+    else AssertionError.raise("Command " + item.name + " can not be shown in a menu")
+  } else {
+    return item.display(menu)
+  }
+}
+
+function paramDefault(param, pm, command) {
+  if (param.prefill) {
+    let prefill = param.prefill.call(command.self, pm)
+    if (prefill != null) return prefill
+  }
+  return param.default
 }
 
 function buildParamForm(pm, command) {
-  let prefill = command.info.prefillParams && command.info.prefillParams(pm)
   let fields = command.params.map((param, i) => {
     let field, name = "field_" + i
-    let val = prefill ? prefill[i] : param.default || ""
+    let val = paramDefault(param, pm, command)
     if (param.type == "text")
       field = elt("input", {name, type: "text",
-                            placeholder: param.name,
+                            placeholder: param.label,
                             value: val,
                             autocomplete: "off"})
     else if (param.type == "select")
       field = elt("select", {name}, (param.options.call ? param.options(pm) : param.options)
                   .map(o => elt("option", {value: o.value, selected: o == val}, o.label)))
     else // FIXME more types
-      throw new Error("Unsupported parameter type: " + param.type)
+      AssertionError.raise("Unsupported parameter type: " + param.type)
     return elt("div", null, field)
   })
   return elt("form", null, fields)
@@ -192,7 +242,7 @@ function gatherParams(pm, command, form) {
     let val = form.elements["field_" + i].value
     if (val) return val
     if (param.default == null) bad = true
-    else return param.default.call ? param.default(pm) : param.default
+    else return paramDefault(param, pm, command)
   })
   return bad ? null : params
 }
@@ -250,33 +300,37 @@ const separator = {
   display() { return elt("div", {class: "ProseMirror-menuseparator"}) }
 }
 
-export function commandGroups(pm, ...names) {
-  return names.map(group => {
-    let found = []
-    for (let name in pm.commands) {
-      let cmd = pm.commands[name]
-      if (cmd.info.menuGroup && cmd.info.menuGroup == group)
-        sortedInsert(found, cmd, (a, b) => (a.info.menuRank || 50) - (b.info.menuRank || 50))
-    }
-    return found
-  })
+function menuRank(cmd) {
+  let match = /^[^(]+\((\d+)\)$/.exec(cmd.spec.menuGroup)
+  return match ? +match[1] : 50
 }
 
-// Awkward hack to force Chrome to initialize the font and not return
-// incorrect size information the first time it is used.
+function computeMenuGroups(pm) {
+  let groups = Object.create(null)
+  for (let name in pm.commands) {
+    let cmd = pm.commands[name], spec = cmd.spec.menuGroup
+    if (!spec) continue
+    let [group] = /^[^(]+/.exec(spec)
+    sortedInsert(groups[group] || (groups[group] = []), cmd, (a, b) => menuRank(a) - menuRank(b))
+  }
+  pm.mod.menuGroups = groups
+  let clear = () => {
+    pm.mod.menuGroups = null
+    pm.off("commandsChanging", clear)
+  }
+  pm.on("commandsChanging", clear)
+  return groups
+}
 
-let forced = false
-export function forceFontLoad(pm) {
-  if (forced) return
-  forced = true
+const empty = []
 
-  let node = pm.wrapper.appendChild(elt("div", {class: "ProseMirror-menuicon ProseMirror-icon-strong",
-                                                style: "visibility: hidden; position: absolute"}))
-  window.setTimeout(() => pm.wrapper.removeChild(node), 20)
+export function menuGroups(pm, names) {
+  let groups = pm.mod.menuGroups || computeMenuGroups(pm)
+  return names.map(group => groups[group] || empty)
 }
 
 function tooltipParamHandler(pm, command, callback) {
-  let tooltip = new Tooltip(pm, "center")
+  let tooltip = new Tooltip(pm.wrapper, "center")
   tooltip.open(paramForm(pm, command, params => {
     pm.focus()
     tooltip.close()
@@ -284,8 +338,7 @@ function tooltipParamHandler(pm, command, callback) {
   }))
 }
 
-defineParamHandler("default", tooltipParamHandler)
-defineParamHandler("tooltip", tooltipParamHandler)
+defineDefaultParamHandler(tooltipParamHandler, false)
 
 // FIXME check for obsolete styles
 insertCSS(`
@@ -293,11 +346,11 @@ insertCSS(`
 .ProseMirror-menu {
   margin: 0 -4px;
   line-height: 1;
-  white-space: pre;
 }
 .ProseMirror-tooltip .ProseMirror-menu {
   width: -webkit-fit-content;
   width: fit-content;
+  white-space: pre;
 }
 
 .ProseMirror-tooltip-back-wrapper {
@@ -313,20 +366,7 @@ insertCSS(`
 }
 
 .ProseMirror-menuicon {
-  display: inline-block;
-  padding: 1px 4px;
-  margin: 0 2px;
-  cursor: pointer;
-  text-rendering: auto;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-align: center;
-  vertical-align: middle;
-}
-
-.ProseMirror-menuicon-active {
-  background: #666;
-  border-radius: 4px;
+  margin: 0 7px;
 }
 
 .ProseMirror-menuseparator {
@@ -336,11 +376,10 @@ insertCSS(`
   content: "︙";
   opacity: 0.5;
   padding: 0 4px;
-  vertical-align: middle;
 }
 
 .ProseMirror-select, .ProseMirror-select-menu {
-  border: 1px solid #777;
+  border: 1px solid #ccc;
   border-radius: 3px;
   font-size: 90%;
 }
@@ -348,13 +387,13 @@ insertCSS(`
 .ProseMirror-select {
   padding: 1px 12px 1px 4px;
   display: inline-block;
-  vertical-align: middle;
+  vertical-align: 1px;
   position: relative;
   cursor: pointer;
-  margin: 0 4px;
+  margin: 0 8px;
 }
 
-.ProseMirror-select-command-textblockType {
+.ProseMirror-select-command-textblockType, .ProseMirror-select-command-insert {
   min-width: 3.2em;
 }
 

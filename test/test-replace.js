@@ -1,6 +1,5 @@
 import {replace} from "../src/transform/replace"
 import {MovedRange} from "../src/transform/map"
-import {sliceBetween} from "../src/model"
 
 import {doc, blockquote, pre, h1, h2, p, li, ol, ul, em, strong, code, a, a2, br, hr} from "./build"
 
@@ -10,12 +9,12 @@ import {cmpNode, cmpStr, P} from "./cmp"
 
 function test(name, doc, insert, expected, moved) {
   defTest("replace_inner_" + name, () => {
-    let sliced = sliceBetween(insert, insert.tag.a, insert.tag.b)
+    let sliced = insert.sliceBetween(insert.tag.a, insert.tag.b)
     let repl
     for (let left = insert.tag.a, right = insert.tag.b, i = 0, node = sliced;; i++) {
       if (i == left.path.length || i == right.path.length || left.path[i] != right.path[i] ||
           insert.tag.root && i == insert.tag.root.path.length) {
-        repl = {nodes: node.children, openLeft: left.path.length - i, openRight: right.path.length - i}
+        repl = {content: node.content, openLeft: left.path.length - i, openRight: right.path.length - i}
         break
       }
       node = node.child(left.path[i])
