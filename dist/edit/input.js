@@ -352,10 +352,9 @@ handlers.copy = handlers.cut = function (pm, e) {
 function docSide(doc, side) {
   var path = [];
   for (var node = doc; node; node = side == "end" ? node.lastChild : node.firstChild) {
-    var nextOff = side == "end" ? node.maxOffset : 0;
-    if (node.isTextblock) return new _model.Pos(path, nextOff);
+    if (node.isTextblock) return new _model.Pos(path, side == "end" ? node.maxOffset : 0);
     if (node.type.contains == null && node.type.selectable) return _model.Pos.from(path);
-    path.push(nextOff);
+    path.push(side == "end" ? node.maxOffset - 1 : 0);
   }
 }
 
