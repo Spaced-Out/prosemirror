@@ -1,0 +1,19 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: prosemirror
+  description: This is a well-behaved what-you-see-is-what-you-mean editor based on
+  annotations:
+    github.com/project-slug: Spaced-Out/prosemirror
+    backstage.io/techdocs-ref: dir:.
+  tags:
+  - nodejs
+  links:
+  - url: https://github.com/Spaced-Out/prosemirror
+    title: GitHub Repository
+    icon: github
+spec:
+  type: library
+  lifecycle: production
+  owner: group:default/sense-engineering
+  system: system:default/other
